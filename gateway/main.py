@@ -47,7 +47,33 @@ async def forward_request(service: str, path: str, method: str, request: Request
             raise HTTPException(status_code=503, detail=f"Service {service} is unavailable: {str(e)}")
         
 
+async def forward_request(service: str, path: str, method: str, **kwargs) -> Any:
+    if service not in SERVICES:
+        raise HTTPException(status_code=404, detail="Service configuration missing")
 
+    url = f"{SERVICES[service]}{path}"
+
+    async with httpx.AsyncClient() as client:
+        try:
+            # Added a timeout to prevent gateway hanging (Activity 4)
+            response = await client.request(method, url, timeout=5.0, **kwargs)
+            
+            # If the backend service returns an error, relay it (Activity 4)
+            if response.status_code >= 400:
+                return JSONResponse(
+                    status_code=response.status_code,
+                    content={"error": "Downstream Service Error", "detail": response.text}
+                )
+
+            return JSONResponse(
+                content=response.json() if response.text else None,
+                status_code=response.status_code
+            )
+        except httpx.ConnectError:
+            raise HTTPException(status_code=503, detail=f"Service {service} is offline")
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504, detail=f"Service {service} timed out")
+        
 @app.get("/")
 async def read_root():
     return {
@@ -95,11 +121,6 @@ async def create_course(request: Request):
     body = await request.json()
     return await forward_request("course", "/api/courses", "POST", json=body)
 
-#JWT auth endpoints
-@app.get("/gateway/students")
-async def get_all_students(token: str):
-    verify_token(token)
-    return await forward_request("student", "/api/students", "GET")
 
 
 @app.exception_handler(Exception)
