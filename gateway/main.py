@@ -1,8 +1,13 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 import httpx
+from jose import jwt
 from typing import Any
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import time
+import logging
+
 
 
 app = FastAPI(title="API Gateway", version="1.0.0")
@@ -74,6 +79,41 @@ async def forward_request(service: str, path: str, method: str, **kwargs) -> Any
         except httpx.TimeoutException:
             raise HTTPException(status_code=504, detail=f"Service {service} timed out")
         
+
+security = HTTPBearer()
+SECRET_KEY = "your secret key"
+
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        return payload
+    except:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+# Optional: Configure standard python logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("gateway")
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start_time = time.time()
+    method = request.method
+    path = request.url.path
+    client_host = request.client.host
+    
+    print(f"--- Incoming Request: {method} {path} from {client_host} ---")
+    
+    response = await call_next(request)
+    process_time = (time.time() - start_time) * 1000  
+    
+    print(f"--- Finished Request: {method} {path} | Status: {response.status_code} | Time: {process_time:.2f}ms ---")
+    
+    response.headers["X-Process-Time"] = str(process_time)
+    
+    return response
+
+
 @app.get("/")
 async def read_root():
     return {
@@ -129,3 +169,8 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"error": "Internal Server Error", "detail": str(exc)}
     )
+
+# Apply to routes
+@app.get("/gateway/students", dependencies=[Depends(verify_token)])
+async def get_all_students():
+    return await forward_request("student", "/api/students", "GET")
