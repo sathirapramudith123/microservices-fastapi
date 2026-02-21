@@ -31,3 +31,8 @@ course openapi
 ``` 
 http://localhost:8002/docs#/
 ```
+
+JWT Secret Key 
+```
+py -c "import secrets; print(secrets.token_hex(32))"
+```
